@@ -1,0 +1,445 @@
+name: M5 CI
+
+on:
+  push:
+    branches:
+      - main
+      - shoaib-m5-devops
+
+  pull_request:
+    branches:
+      - main
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  infrastructure-validation:
+    name: Infrastructure Validation
+    runs-on: ubuntu-24.04
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Set up Terraform
+        uses: hashicorp/setup-terraform@v4.0.1
+        with:
+          terraform_version: 1.16.4
+
+
+      - name: Show Docker version
+        run: docker --version
+
+      - name: Show Docker Compose version
+        run: docker compose version
+
+      - name: Create CI environment file
+        run: cp .env.example .env
+
+      - name: Validate Terraform configuration
+        run: |
+          terraform -chdir=infrastructure/terraform fmt -check
+          terraform -chdir=infrastructure/terraform init -backend=false
+          terraform -chdir=infrastructure/terraform validate
+          terraform -chdir=infrastructure/terraform plan             -input=false             -lock=false             -var="environment=development"             -out=/tmp/m5-development.tfplan
+
+      - name: Validate Docker Compose configuration
+        run: docker compose config
+
+      - name: Check configuration syntax
+        run: |
+          bash -n scripts/check-local-stack.sh
+          bash -n scripts/check-environment-config.sh
+          bash -n scripts/check-repository-security.sh
+          bash -n scripts/backup-postgres.sh
+          bash -n scripts/restore-postgres.sh
+          bash -n scripts/check-postgres-restore-safety.sh
+          bash -n scripts/check-alert-pipeline.sh
+          bash -n scripts/verify-postgres-recovery.sh
+          bash -n scripts/generate-sbom.sh
+          bash -n scripts/scan-dependencies.sh
+          bash -n scripts/scan-container-images.sh
+          python3 -m json.tool \
+            infrastructure/monitoring/grafana/dashboards/m5-overview.json \
+            >/dev/null
+
+      - name: Validate environment configuration templates
+        run: ./scripts/check-environment-config.sh
+
+      - name: Validate repository security controls
+        run: ./scripts/check-repository-security.sh
+
+      - name: Validate Prometheus configuration and alert rules
+        run: |
+          docker run --rm \
+            --entrypoint /bin/promtool \
+            -v "$PWD/infrastructure/monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro" \
+            -v "$PWD/infrastructure/monitoring/alerts:/etc/prometheus/alerts:ro" \
+            prom/prometheus:v3.14.0 \
+            check config /etc/prometheus/prometheus.yml
+
+      - name: Unit-test Prometheus alert rules
+        run: |
+          docker run --rm \
+            --entrypoint /bin/promtool \
+            -v "$PWD/infrastructure/monitoring:/monitoring:ro" \
+            prom/prometheus:v3.14.0 \
+            test rules /monitoring/alerts-tests/platform-alerts.test.yml
+
+      - name: Validate Alertmanager configuration
+        run: |
+          docker run --rm \
+            --entrypoint /bin/amtool \
+            -v "$PWD/infrastructure/monitoring/alertmanager:/etc/alertmanager:ro" \
+            prom/alertmanager:v0.34.1 \
+            check-config /etc/alertmanager/alertmanager.yml
+
+      - name: Validate Loki configuration
+        run: |
+          docker run --rm \
+            -v "$PWD/infrastructure/monitoring/loki/loki-config.yml:/etc/loki/local-config.yaml:ro" \
+            grafana/loki:3.7.8 \
+            -config.file=/etc/loki/local-config.yaml \
+            -verify-config=true
+
+      - name: Validate Alloy configuration
+        run: |
+          docker run --rm \
+            -v "$PWD/infrastructure/monitoring/alloy/config.alloy:/etc/alloy/config.alloy:ro" \
+            grafana/alloy:v1.19.2 \
+            validate /etc/alloy/config.alloy
+
+      - name: Validate Tempo configuration
+        run: |
+          docker run --rm \
+            -v "$PWD/infrastructure/monitoring/tempo/tempo.yml:/etc/tempo/tempo.yml:ro" \
+            grafana/tempo:3.0.3 \
+            -config.file=/etc/tempo/tempo.yml \
+            -config.verify=true
+
+      - name: Validate OpenTelemetry Collector configuration
+        run: |
+          docker run --rm \
+            -v "$PWD/infrastructure/monitoring/otel-collector/config.yml:/etc/otelcol-contrib/config.yml:ro" \
+            otel/opentelemetry-collector-contrib:0.161.0 \
+            validate --config=/etc/otelcol-contrib/config.yml
+
+      - name: Start infrastructure services
+        run: docker compose up -d postgres postgres-exporter redis redis-exporter prometheus alertmanager loki alloy tempo otel-collector grafana
+
+      - name: Wait for services
+        run: sleep 25
+
+      - name: Run infrastructure health checks
+        run: ./scripts/check-local-stack.sh
+
+      - name: Verify PostgreSQL restore safety guard
+        run: ./scripts/check-postgres-restore-safety.sh
+
+      - name: Verify alerting pipeline
+        run: ./scripts/check-alert-pipeline.sh
+
+      - name: Verify PostgreSQL backup and restore
+        run: ./scripts/verify-postgres-recovery.sh
+
+      - name: Verify Grafana dashboard provisioning
+        run: |
+          GRAFANA_USER="$(docker compose exec -T grafana sh -c 'printf "%s" "$GF_SECURITY_ADMIN_USER"')"
+          GRAFANA_PASSWORD="$(docker compose exec -T grafana sh -c 'printf "%s" "$GF_SECURITY_ADMIN_PASSWORD"')"
+
+          curl -fsS \
+            -u "${GRAFANA_USER}:${GRAFANA_PASSWORD}" \
+            http://127.0.0.1:3001/api/dashboards/uid/m5-overview \
+            | python3 -c '
+          import json
+          import sys
+
+          data = json.load(sys.stdin)
+
+          assert data["dashboard"]["uid"] == "m5-overview"
+
+          print("Grafana dashboard provisioning OK")
+          '
+
+      - name: Verify Grafana Loki datasource provisioning
+        run: |
+          GRAFANA_USER="$(docker compose exec -T grafana sh -c 'printf "%s" "$GF_SECURITY_ADMIN_USER"')"
+          GRAFANA_PASSWORD="$(docker compose exec -T grafana sh -c 'printf "%s" "$GF_SECURITY_ADMIN_PASSWORD"')"
+
+          curl -fsS \
+            -u "${GRAFANA_USER}:${GRAFANA_PASSWORD}" \
+            http://127.0.0.1:3001/api/datasources/uid/loki \
+            | python3 -c '
+          import json
+          import sys
+
+          data = json.load(sys.stdin)
+
+          assert data["uid"] == "loki"
+          assert data["type"] == "loki"
+          assert data["url"] == "http://loki:3100"
+
+          print("Grafana Loki datasource provisioning OK")
+          '
+
+      - name: Verify Grafana Tempo datasource provisioning
+        run: |
+          GRAFANA_USER="$(docker compose exec -T grafana sh -c 'printf "%s" "$GF_SECURITY_ADMIN_USER"')"
+          GRAFANA_PASSWORD="$(docker compose exec -T grafana sh -c 'printf "%s" "$GF_SECURITY_ADMIN_PASSWORD"')"
+
+          curl -fsS \
+            -u "${GRAFANA_USER}:${GRAFANA_PASSWORD}" \
+            http://127.0.0.1:3001/api/datasources/uid/tempo \
+            | python3 -c '
+          import json
+          import sys
+
+          data = json.load(sys.stdin)
+
+          assert data["uid"] == "tempo"
+          assert data["type"] == "tempo"
+          assert data["url"] == "http://tempo:3200"
+
+          print("Grafana Tempo datasource provisioning OK")
+          '
+
+      - name: Show container logs on failure
+        if: failure()
+        run: docker compose logs
+
+      - name: Stop containers
+        if: always()
+        run: docker compose down
+
+  secret-scan:
+    name: Secret Scan
+    needs: infrastructure-validation
+    runs-on: ubuntu-24.04
+
+    steps:
+      - name: Checkout full Git history
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Run Gitleaks secret scan
+        uses: gitleaks/gitleaks-action@v3
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITLEAKS_ENABLE_COMMENTS: "false"
+
+  supply-chain-security:
+    name: SBOM and Vulnerability Scan
+    needs: secret-scan
+    runs-on: ubuntu-24.04
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Generate CycloneDX SBOM
+        uses: anchore/sbom-action@v0
+        with:
+          path: .
+          format: cyclonedx-json
+          output-file: sbom.cdx.json
+          upload-artifact: false
+          upload-release-assets: false
+
+      - name: Scan SBOM with Grype
+        uses: anchore/scan-action@v7
+        with:
+          sbom: sbom.cdx.json
+          fail-build: true
+          severity-cutoff: critical
+          output-format: table
+
+      - name: Upload SBOM artifact
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: sbom-cyclonedx
+          path: sbom.cdx.json
+          if-no-files-found: error
+  container-security:
+    name: Container Image Security Scan
+    needs: supply-chain-security
+    runs-on: ubuntu-24.04
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Scan Redis image
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          scan-type: image
+          image-ref: redis:7-alpine
+          format: table
+          exit-code: "1"
+          ignore-unfixed: false
+          vuln-type: os,library
+          severity: HIGH,CRITICAL
+          version: v0.74.0
+
+      - name: Scan PostgreSQL image
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          scan-type: image
+          image-ref: postgres:16-alpine
+          format: json
+          output: trivy-postgres.json
+          exit-code: "0"
+          ignore-unfixed: false
+          vuln-type: os,library
+          severity: HIGH,CRITICAL
+          version: v0.74.0
+
+      - name: Evaluate PostgreSQL scan
+        run: |
+          python3 - <<'PYSCAN'
+          import json
+          from pathlib import Path
+
+          report_path = Path("trivy-postgres.json")
+
+          if not report_path.exists():
+              raise SystemExit("ERROR: PostgreSQL Trivy report was not created.")
+
+          report = json.loads(report_path.read_text())
+
+          high = 0
+          critical = 0
+
+          for result in report.get("Results") or []:
+              for vulnerability in result.get("Vulnerabilities") or []:
+                  severity = vulnerability.get("Severity", "").upper()
+
+                  if severity == "HIGH":
+                      high += 1
+                  elif severity == "CRITICAL":
+                      critical += 1
+
+          print(f"PostgreSQL image findings: HIGH={high}, CRITICAL={critical}")
+
+          summary = Path("/tmp/postgres-security-summary.md")
+          summary.write_text(
+              "## PostgreSQL container security\n\n"
+              f"- HIGH findings: **{high}**\n"
+              f"- CRITICAL findings: **{critical}**\n\n"
+              + (
+                  "### Production status: NOT APPROVED\n\n"
+                  "The image may continue to be used for local development and CI testing, "
+                  "but production deployment remains blocked while CRITICAL findings exist.\n\n"
+                  "See `docs/security/container-scan-findings.md`.\n"
+                  if critical > 0
+                  else
+                  "### Production security gate\n\n"
+                  "No CRITICAL findings were detected by this scan. "
+                  "Any remaining HIGH findings still require review or explicit risk acceptance.\n"
+              )
+          )
+
+          if critical > 0:
+              print(
+                  "SECURITY STATUS: PostgreSQL image is not approved for production "
+                  "while CRITICAL vulnerabilities remain."
+              )
+          PYSCAN
+
+          cat /tmp/postgres-security-summary.md >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload PostgreSQL Trivy report
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: postgres-trivy-report
+          path: trivy-postgres.json
+          if-no-files-found: error
+
+  frontend-quality:
+    name: Frontend Quality Gates
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: frontend
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Type check
+        run: npm run typecheck
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Unit tests
+        run: npm test
+
+      - name: Production build
+        run: npm run build
+
+  python-tests:
+    name: Python Tests (M1, M2, M3)
+    runs-on: ubuntu-24.04
+
+    services:
+      rag-postgres:
+        image: pgvector/pgvector:0.8.6-pg16
+        env:
+          POSTGRES_DB: rag_dev
+          POSTGRES_USER: rag
+          POSTGRES_PASSWORD: rag
+        ports:
+          - 5433:5432
+        options: >-
+          --health-cmd "pg_isready -U rag -d rag_dev"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      DATABASE_URL: postgresql://rag:rag@localhost:5433/rag_dev
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          grep -v -i "sentence-transformers" rag/requirements-m2.txt > /tmp/req-m2.txt
+          pip install -r requirements.txt -r /tmp/req-m2.txt
+
+      - name: Apply M2 development schema
+        run: |
+          for f in rag/sql/001_m2_vector_dev.sql rag/sql/002_m2_provenance_dev.sql rag/sql/003_m2_retrieval_provenance_dev.sql; do
+            PGPASSWORD=rag psql -v ON_ERROR_STOP=1 -h localhost -p 5433 -U rag -d rag_dev -f "$f"
+          done
+
+      - name: Run migrations against a fresh database
+        run: |
+          PGPASSWORD=rag psql -h localhost -p 5433 -U rag -d rag_dev -c "CREATE DATABASE migrations_check"
+          DATABASE_URL=postgresql://rag:rag@localhost:5433/migrations_check alembic upgrade head
+          DATABASE_URL=postgresql://rag:rag@localhost:5433/migrations_check alembic check
+
+      - name: Run tests
+        run: pytest -q

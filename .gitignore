@@ -1,0 +1,73 @@
+.env
+.venv/
+venv/
+env/
+__pycache__/
+*.pyc
+node_modules/
+dist/
+build/
+.vscode/
+.idea/
+*.log
+*.db
+*.sqlite
+*.sqlite3
+.DS_Store
+Thumbs.db
+rag/evaluation/output/
+
+# ==============================
+# M5 - Security / Secrets
+# ==============================
+
+*.pem
+*.key
+*.p12
+*.pfx
+
+# Terraform variable files may contain secrets
+*.tfvars
+*.tfvars.json
+
+# ==============================
+# M5 - Terraform
+# ==============================
+
+.terraform/
+terraform.tfstate
+terraform.tfstate.*
+*.tfstate
+*.tfstate.*
+crash.log
+crash.*.log
+.terraform.lock.hcl.backup
+
+# ==============================
+# M5 - Security / Scan Outputs
+# ==============================
+
+.trivy/
+.gitleaks-report.json
+grype-report.json
+security-reports/
+
+# ==============================
+# M5 - Test / Coverage Outputs
+# ==============================
+
+.coverage
+htmlcov/
+coverage.xml
+.pytest_cache/
+
+# ==============================
+# M5 - Generated SBOM Files
+# ==============================
+
+sbom*.json
+*.spdx.json
+
+# Local database backups
+backups/*
+!backups/.gitkeep

@@ -1,0 +1,17 @@
+openai
+python-dotenv
+httpx
+
+PyMuPDF
+pdfplumber
+pytesseract
+Pillow
+
+tiktoken
+
+psycopg[binary]
+
+sentence-transformers
+
+pytest
+pytest-cov

@@ -1,0 +1,61 @@
+{
+  "version": "v4.0",
+  "dataset_name": "autonomous_ai_research_golden_baseline",
+  "samples": [
+    {
+      "id": "gold-sample-001",
+      "research_question": "What is the economic impact of autonomous AI agents on corporate research productivity?",
+      "expected_source_categories": [
+        "literature_and_sources",
+        "empirical_evidence",
+        "comparative_analysis"
+      ],
+      "expected_evidence": [
+        {
+          "excerpt": "Autonomous AI agent workflows reduced research report generation cycles by 64% across enterprise deployments.",
+          "category": "productivity_gain"
+        },
+        {
+          "excerpt": "Organizations observed average operational computing cost reductions of 28% after implementing hybrid model routing.",
+          "category": "cost_efficiency"
+        }
+      ],
+      "expected_claims": [
+        "Autonomous AI agent workflows significantly reduce report generation cycles.",
+        "Model routing optimization lowers enterprise computing costs."
+      ],
+      "expected_citations": [
+        "evidence:productivity_gain",
+        "evidence:cost_efficiency"
+      ],
+      "expected_contradictions": [
+        {
+          "type": "NUMERIC_CONFLICT",
+          "metric": "cycle_time_reduction",
+          "description": "Report A cites 64% cycle reduction while Report B cites 35% on legacy models."
+        }
+      ]
+    },
+    {
+      "id": "gold-sample-002",
+      "research_question": "How do deterministic verification checks impact hallucination rates in generative AI systems?",
+      "expected_source_categories": [
+        "empirical_evidence",
+        "comparative_analysis"
+      ],
+      "expected_evidence": [
+        {
+          "excerpt": "Deterministic citation grounding eliminated unsupported claim generation, dropping hallucination frequency below 2%.",
+          "category": "hallucination_rate"
+        }
+      ],
+      "expected_claims": [
+        "Deterministic grounding restricts hallucination frequency to under 2%."
+      ],
+      "expected_citations": [
+        "evidence:hallucination_rate"
+      ],
+      "expected_contradictions": []
+    }
+  ]
+}

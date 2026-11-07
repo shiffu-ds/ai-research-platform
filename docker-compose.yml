@@ -1,0 +1,266 @@
+name: autonomous-ai-research-platform
+
+services:
+  postgres:
+    image: pgvector/pgvector:0.8.6-pg16
+    container_name: research-postgres
+
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-research}
+      POSTGRES_USER: ${POSTGRES_USER:-research}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-local_only_change_me}
+    ports:
+      - "127.0.0.1:${POSTGRES_PORT:-5432}:5432"
+
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "pg_isready -U ${POSTGRES_USER:-research} -d ${POSTGRES_DB:-research}",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+    restart: unless-stopped
+  postgres-exporter:
+    image: quay.io/prometheuscommunity/postgres-exporter:v0.20.1
+    container_name: research-postgres-exporter
+
+    environment:
+      DATA_SOURCE_URI: "postgres:5432/${POSTGRES_DB:-research}?sslmode=disable"
+      DATA_SOURCE_USER: ${POSTGRES_USER:-research}
+      DATA_SOURCE_PASS: ${POSTGRES_PASSWORD:-local_only_change_me}
+
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    container_name: research-redis
+
+    command: ["redis-server", "--appendonly", "yes"]
+
+    volumes:
+      - redis_data:/data
+
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+    restart: unless-stopped
+
+  redis-exporter:
+    image: quay.io/oliver006/redis_exporter:v1.92.0
+    container_name: research-redis-exporter
+
+    environment:
+      REDIS_ADDR: redis://redis:6379
+
+    depends_on:
+      redis:
+        condition: service_healthy
+
+    restart: unless-stopped
+
+  prometheus:
+    image: prom/prometheus:v3.14.0
+    container_name: research-prometheus
+
+    ports:
+      - "127.0.0.1:9090:9090"
+
+    volumes:
+      - ./infrastructure/monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./infrastructure/monitoring/alerts:/etc/prometheus/alerts:ro
+      - prometheus_data:/prometheus
+
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.path=/prometheus"
+
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "wget -q --spider http://localhost:9090/-/healthy || exit 1",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+    restart: unless-stopped
+
+  alertmanager:
+    image: prom/alertmanager:v0.34.1
+    container_name: research-alertmanager
+
+    ports:
+      - "127.0.0.1:9093:9093"
+
+    volumes:
+      - ./infrastructure/monitoring/alertmanager/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
+      - alertmanager_data:/alertmanager
+
+    command:
+      - "--config.file=/etc/alertmanager/alertmanager.yml"
+      - "--storage.path=/alertmanager"
+
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "wget -q --spider http://localhost:9093/-/healthy || exit 1",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+    restart: unless-stopped
+  loki:
+    image: grafana/loki:3.7.8
+    container_name: research-loki
+
+    ports:
+      - "127.0.0.1:3100:3100"
+
+    volumes:
+      - ./infrastructure/monitoring/loki/loki-config.yml:/etc/loki/local-config.yaml:ro
+      - loki_data:/loki
+
+    command:
+      - "-config.file=/etc/loki/local-config.yaml"
+
+    restart: unless-stopped
+
+  grafana:
+    image: grafana/grafana:13.2.2
+    container_name: research-grafana
+
+    ports:
+      - "127.0.0.1:3001:3000"
+
+    environment:
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-local_only_change_me}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./infrastructure/monitoring/grafana/provisioning/datasources:/etc/grafana/provisioning/datasources:ro
+      - ./infrastructure/monitoring/grafana/provisioning/dashboards:/etc/grafana/provisioning/dashboards:ro
+      - ./infrastructure/monitoring/grafana/dashboards:/var/lib/grafana/dashboards:ro
+
+    depends_on:
+      prometheus:
+        condition: service_healthy
+
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "wget -q --spider http://localhost:3000/api/health || exit 1",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+
+    restart: unless-stopped
+  alloy:
+    image: grafana/alloy:v1.19.2
+    container_name: research-alloy
+
+    volumes:
+      - ./infrastructure/monitoring/alloy/config.alloy:/etc/alloy/config.alloy:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - alloy_data:/var/lib/alloy/data
+
+    depends_on:
+      - loki
+
+    restart: unless-stopped
+  tempo-init:
+    image: busybox:1.37.0
+    container_name: research-tempo-init
+
+    volumes:
+      - tempo_data:/data/tempo
+
+    command:
+      - sh
+      - -c
+      - |
+        mkdir -p /data/tempo/wal /data/tempo/blocks
+        chown -R 10001:10001 /data/tempo
+  tempo:
+    image: grafana/tempo:3.0.3
+    container_name: research-tempo
+
+    ports:
+      - "127.0.0.1:3200:3200"
+
+    volumes:
+      - ./infrastructure/monitoring/tempo/tempo.yml:/etc/tempo/tempo.yml:ro
+      - tempo_data:/data/tempo
+
+    command:
+      - "-config.file=/etc/tempo/tempo.yml"
+
+    depends_on:
+      tempo-init:
+        condition: service_completed_successfully
+
+    restart: unless-stopped
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.161.0
+    container_name: research-otel-collector
+
+    ports:
+      - "127.0.0.1:4317:4317"
+      - "127.0.0.1:4318:4318"
+
+    volumes:
+      - ./infrastructure/monitoring/otel-collector/config.yml:/etc/otelcol-contrib/config.yml:ro
+
+    command:
+      - "--config=/etc/otelcol-contrib/config.yml"
+
+    depends_on:
+      - tempo
+
+    restart: unless-stopped
+volumes:
+  postgres_data:
+    name: research_postgres_data
+
+  redis_data:
+    name: research_redis_data
+
+  prometheus_data:
+    name: research_prometheus_data
+
+  grafana_data:
+    name: research_grafana_data
+
+  alertmanager_data:
+    name: research_alertmanager_data
+
+  loki_data:
+    name: research_loki_data
+
+  alloy_data:
+    name: research_alloy_data
+  tempo_data:
+    name: research_tempo_data

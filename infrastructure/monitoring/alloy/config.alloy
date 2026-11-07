@@ -1,0 +1,41 @@
+discovery.docker "research" {
+  host             = "unix:///var/run/docker.sock"
+  refresh_interval = "5s"
+}
+
+discovery.relabel "research" {
+  targets = discovery.docker.research.targets
+
+  rule {
+    source_labels = ["__meta_docker_container_name"]
+    regex         = "/research-.*"
+    action        = "keep"
+  }
+
+  rule {
+    source_labels = ["__meta_docker_container_name"]
+    regex         = "/(.*)"
+    target_label  = "container"
+    replacement   = "$1"
+  }
+
+  rule {
+    source_labels = ["__meta_docker_container_name"]
+    regex         = "/(.*)"
+    target_label  = "service_name"
+    replacement   = "$1"
+  }
+}
+
+loki.source.docker "research" {
+  host             = "unix:///var/run/docker.sock"
+  targets          = discovery.relabel.research.output
+  forward_to       = [loki.write.local.receiver]
+  refresh_interval = "5s"
+}
+
+loki.write "local" {
+  endpoint {
+    url = "http://loki:3100/loki/api/v1/push"
+  }
+}

@@ -1,0 +1,81 @@
+# Offline unit tests for infrastructure/monitoring/alerts/*.yml.
+# Run: promtool test rules infrastructure/monitoring/alerts-tests/platform-alerts.test.yml
+# Kept outside alerts/ because Prometheus loads every *.yml there as rules.
+
+rule_files:
+  - ../alerts/platform-alerts.yml
+
+evaluation_interval: 15s
+
+tests:
+  - name: A scrape target that stays down for over a minute fires MonitoringTargetDown
+    interval: 15s
+    input_series:
+      - series: 'up{job="loki", instance="loki:3100"}'
+        values: "0x8"
+      - series: 'up{job="grafana", instance="grafana:3000"}'
+        values: "1x8"
+    alert_rule_test:
+      - eval_time: 30s
+        alertname: MonitoringTargetDown
+        exp_alerts: []
+      - eval_time: 90s
+        alertname: MonitoringTargetDown
+        exp_alerts:
+          - exp_labels:
+              severity: critical
+              component: monitoring
+              job: loki
+              instance: loki:3100
+            exp_annotations:
+              summary: "Monitoring target is down"
+              description: "loki target loki:3100 has been unreachable for more than 1 minute."
+
+  - name: Jobs outside the monitored set never fire MonitoringTargetDown
+    interval: 15s
+    input_series:
+      - series: 'up{job="some-other-job", instance="x:1"}'
+        values: "0x8"
+    alert_rule_test:
+      - eval_time: 90s
+        alertname: MonitoringTargetDown
+        exp_alerts: []
+
+  - name: PostgreSQL down for over a minute fires PostgreSQLUnavailable
+    interval: 15s
+    input_series:
+      - series: 'pg_up{job="postgres-exporter", instance="postgres-exporter:9187"}'
+        values: "1 1 0x8"
+    alert_rule_test:
+      - eval_time: 60s
+        alertname: PostgreSQLUnavailable
+        exp_alerts: []
+      - eval_time: 120s
+        alertname: PostgreSQLUnavailable
+        exp_alerts:
+          - exp_labels:
+              severity: critical
+              component: database
+              job: postgres-exporter
+              instance: postgres-exporter:9187
+            exp_annotations:
+              summary: "PostgreSQL is unavailable"
+              description: "PostgreSQL exporter is reachable, but PostgreSQL has been unreachable for more than 1 minute."
+
+  - name: Redis down for over a minute fires RedisUnavailable
+    interval: 15s
+    input_series:
+      - series: 'redis_up{job="redis-exporter", instance="redis-exporter:9121"}'
+        values: "0x8"
+    alert_rule_test:
+      - eval_time: 90s
+        alertname: RedisUnavailable
+        exp_alerts:
+          - exp_labels:
+              severity: critical
+              component: cache
+              job: redis-exporter
+              instance: redis-exporter:9121
+            exp_annotations:
+              summary: "Redis is unavailable"
+              description: "Redis exporter is reachable, but Redis has been unreachable for more than 1 minute."

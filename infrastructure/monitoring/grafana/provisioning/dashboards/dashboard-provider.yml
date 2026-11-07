@@ -1,0 +1,12 @@
+apiVersion: 1
+
+providers:
+  - name: M5 Monitoring
+    orgId: 1
+    folder: M5 Monitoring
+    type: file
+    disableDeletion: false
+    updateIntervalSeconds: 10
+    allowUiUpdates: false
+    options:
+      path: /var/lib/grafana/dashboards

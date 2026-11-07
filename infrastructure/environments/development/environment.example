@@ -1,0 +1,22 @@
+APP_ENV=development
+
+
+LOG_LEVEL=debug
+
+API_HOST=0.0.0.0
+API_PORT=8000
+
+POSTGRES_DB=research
+POSTGRES_HOST=postgres
+POSTGRES_PORT=5432
+
+REDIS_HOST=redis
+REDIS_PORT=6379
+
+OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4318
+
+PROMETHEUS_URL=http://prometheus:9090
+LOKI_URL=http://loki:3100
+TEMPO_URL=http://tempo:3200
+
+# Secrets such as passwords and API keys must not be stored here.

@@ -1,0 +1,16 @@
+APP_ENV=staging
+
+
+LOG_LEVEL=info
+
+API_HOST=0.0.0.0
+API_PORT=8000
+
+POSTGRES_DB=research
+POSTGRES_PORT=5432
+
+REDIS_PORT=6379
+
+# Hostnames and service endpoints are supplied by the staging platform.
+
+# Secrets must be injected from the approved secret-management system.

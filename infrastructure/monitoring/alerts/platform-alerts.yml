@@ -1,0 +1,31 @@
+groups:
+  - name: m5-infrastructure
+    rules:
+      - alert: MonitoringTargetDown
+        expr: up{job=~"prometheus|grafana|postgres-exporter|redis-exporter|alertmanager|loki|tempo"} == 0
+        for: 1m
+        labels:
+          severity: critical
+          component: monitoring
+        annotations:
+          summary: "Monitoring target is down"
+          description: "{{ $labels.job }} target {{ $labels.instance }} has been unreachable for more than 1 minute."
+      - alert: PostgreSQLUnavailable
+        expr: pg_up == 0
+        for: 1m
+        labels:
+          severity: critical
+          component: database
+        annotations:
+          summary: "PostgreSQL is unavailable"
+          description: "PostgreSQL exporter is reachable, but PostgreSQL has been unreachable for more than 1 minute."
+
+      - alert: RedisUnavailable
+        expr: redis_up == 0
+        for: 1m
+        labels:
+          severity: critical
+          component: cache
+        annotations:
+          summary: "Redis is unavailable"
+          description: "Redis exporter is reachable, but Redis has been unreachable for more than 1 minute."

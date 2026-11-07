@@ -1,0 +1,17 @@
+APP_ENV=production
+
+
+LOG_LEVEL=info
+
+API_HOST=0.0.0.0
+API_PORT=8000
+
+POSTGRES_DB=research
+POSTGRES_PORT=5432
+
+REDIS_PORT=6379
+
+# Production infrastructure endpoints are deployment-specific.
+
+# No production passwords, API keys, tokens, or private keys belong in this file.
+# Secrets must be injected from the production secret manager.
